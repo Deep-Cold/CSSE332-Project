@@ -107,7 +107,8 @@ int             either_copyout(int user_dst, uint64 dst, void *src, uint64 len);
 int             either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 void            procdump(void);
 int             thread_create(uint64, uint64, uint64);
-int             thread_join(uint64, uint64);
+int             thread_join(int, uint64);
+int             thread_exit(uint64);
 
 // swtch.S
 void            swtch(struct context*, struct context*);

@@ -10,6 +10,7 @@ struct cpu cpus[NCPU];
 
 struct proc proc[NPROC];
 
+
 struct proc *initproc;
 
 int nextpid = 1;
@@ -124,6 +125,7 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
+  p->is_thread = 0;
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -682,22 +684,181 @@ procdump(void)
   }
 }
 
+
+static struct proc*
+allocthread(void)
+{
+  struct proc *p;
+
+  for(p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if(p->state == UNUSED) {
+      goto found;
+    } else {
+      release(&p->lock);
+    }
+  }
+  return 0;
+
+found:
+  p->pid = allocpid();
+  p->state = USED;
+  p->is_thread = 1;
+
+  // Allocate a trapframe page.
+  if((p->trapframe = (struct trapframe *)kalloc()) == 0){
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+
+  // An empty user page table.
+  p->pagetable = proc_pagetable(p);
+  if(p->pagetable == 0){
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+
+  // Set up new context to start executing at forkret,
+  // which returns to user space.
+  memset(&p->context, 0, sizeof(p->context));
+  p->context.ra = (uint64)forkret;
+  p->context.sp = p->kstack + PGSIZE;
+
+  return p;
+}
+
+int
+thread_exit(uint64 ret)
+{
+  struct proc *p = myproc();
+
+  // Close all open files.
+  for(int fd = 0; fd < NOFILE; fd++){
+    if(p->ofile[fd]){
+      struct file *f = p->ofile[fd];
+      fileclose(f);
+      p->ofile[fd] = 0;
+    }
+  }
+
+  begin_op();
+  iput(p->cwd);
+  end_op();
+  p->cwd = 0;
+
+  acquire(&wait_lock);
+
+  // Give any children to init.
+  reparent(p);
+
+  // Parent might be sleeping in wait().
+  wakeup(p->parent);
+  
+  acquire(&p->lock);
+
+  p->ret = (void*)ret;
+  p->state = ZOMBIE;
+
+  release(&wait_lock);
+
+  // Jump into the scheduler, never to return.
+  sched();
+  panic("zombie exit");
+}
+
 int 
 thread_create(uint64 tid_addr, uint64 func_addr, uint64 argu_addr)
 {
-  int *tid = (int*)tid_addr;
-  void *func = (void*)func_addr, *argu = (void*)argu_addr;
-  printf("Addr of tid is %p, addr of func is %p, addr of argu is %p\n", tid, func, argu);
-  printf("This call has not been implements yet!\n");
+  struct proc *np;
+  struct proc *p = myproc();
+  //int *tid = (int*)tid_addr;
+  //void *func = (void*)func_addr, *argu = (void*)argu_addr;
+  int i, tidv;
+  
+  // Allocate thread
+  if((np = allocthread()) == 0){
+    return -1;
+  }
+  
+  tidv = np -> pid;
+
+  // Copy user memory from parent to child.
+  if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0 || copyout(p->pagetable, tid_addr, (char *)(&tidv), 4) < 0){
+    freeproc(np);
+    release(&np->lock);
+    return -1;
+  }
+  
+  np->sz = p->sz;
+
+  // copy saved user registers.
+  *(np->trapframe) = *(p->trapframe);
+  
+  // update the beginning information of the function
+  np->trapframe->a0 = argu_addr;
+  np->trapframe->epc = func_addr;
+  
+  // increment reference counts on open file descriptors.
+  for(i = 0; i < NOFILE; i++)
+  if(p->ofile[i])
+  np->ofile[i] = filedup(p->ofile[i]);
+  np->cwd = idup(p->cwd);
+  
+  safestrcpy(np->name, p->name, sizeof(p->name));
+  
+  release(&np->lock);
+  
+  acquire(&wait_lock);
+  np->parent = p;
+  release(&wait_lock);
+  
+  acquire(&np->lock);
+  np->state = RUNNABLE;
+  release(&np->lock);
+
+  //printf("Addr of tid is %p, addr or func is %p, addr of argu is %p\n", tid, func, argu);
+
   return 0;
 }
 
 int
-thread_join(uint64 tid_addr, uint64 ret_addr)
+thread_join(int tid, uint64 ret_addr)
 {
-  int *tid = (int*)tid_addr;
-  void *ret = (void*)ret_addr;
-  printf("Addr of tid is %p, addr of ret is %p\n", tid, ret);
-  printf("This call has not been implements yet!\n");
+  // int *tid = (int*)tid_addr;
+  // void *ret = (void*)ret_addr;
+  // printf("Addr of tid is %p, addr of ret is %p\n", tid, ret);
+  // printf("This call has not been implements yet!\n");
+  struct proc *tp;
+  struct proc *p = myproc();
+
+  acquire(&wait_lock);
+  for (;;) {
+    int found = 0;
+    for (tp = proc; tp < &proc[NPROC]; tp++) {
+        if (tp->pid == tid && tp->parent == p && tp->is_thread) {
+            acquire(&tp->lock);
+            found = 1;
+            if (tp->state == ZOMBIE) {
+                if (ret_addr != 0 && copyout(p->pagetable, ret_addr, (char*)&tp->ret, sizeof(void*)) < 0) {
+                    release(&tp->lock);
+                    release(&wait_lock);
+                    return -1;
+                }
+                freeproc(tp);
+                release(&tp->lock);
+                release(&wait_lock);
+                return 0;
+            }
+            release(&tp->lock);
+        }
+    }
+    if (!found || killed(p)) {
+        release(&wait_lock);
+        return -1;
+    }
+    sleep(p, &wait_lock);
+  }
   return 0;
 }

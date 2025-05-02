@@ -108,3 +108,10 @@ sys_thread_join(void)
   argaddr(1, &ret);
   return thread_join(tid, ret);
 }
+
+uint64 
+sys_thread_exit(void) {
+  uint64 status;
+  argaddr(0, &status);
+  return thread_exit(status);
+}
