@@ -799,7 +799,7 @@ thread_create(uint64 tid_addr, uint64 func_addr, uint64 argu_addr)
   // update the beginning information of the function
   np->trapframe->a0 = argu_addr;
   np->trapframe->epc = func_addr;
-  np->trapframe->sp = PGSIZE;
+  np->trapframe->sp = PGSIZE << 2;
   
   // increment reference counts on open file descriptors.
   for(i = 0; i < NOFILE; i++)
