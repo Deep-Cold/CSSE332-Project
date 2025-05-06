@@ -799,11 +799,12 @@ thread_create(uint64 tid_addr, uint64 func_addr, uint64 argu_addr)
   // update the beginning information of the function
   np->trapframe->a0 = argu_addr;
   np->trapframe->epc = func_addr;
+  np->trapframe->sp = PGSIZE;
   
   // increment reference counts on open file descriptors.
   for(i = 0; i < NOFILE; i++)
-  if(p->ofile[i])
-  np->ofile[i] = filedup(p->ofile[i]);
+    if(p->ofile[i])
+      np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
   
   safestrcpy(np->name, p->name, sizeof(p->name));
