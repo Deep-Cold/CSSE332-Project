@@ -436,6 +436,14 @@ wait(uint64 addr)
   }
 }
 
+
+static inline void
+__wfi(void)
+{
+  asm volatile("wfi");
+}
+
+
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
 // Scheduler never returns.  It loops, doing:
@@ -453,10 +461,11 @@ scheduler(void)
   for(;;){
     // Avoid deadlock by ensuring that devices can interrupt.
     intr_on();
-
+    int found = 0;
     for(p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
       if(p->state == RUNNABLE) {
+        found = 1;
         // Switch to chosen process.  It is the process's job
         // to release its lock and then reacquire it
         // before jumping back to us.
@@ -469,6 +478,9 @@ scheduler(void)
         c->proc = 0;
       }
       release(&p->lock);
+    }
+    if(!found) {
+      __wfi();
     }
   }
 }
@@ -796,10 +808,20 @@ thread_create(uint64 tid_addr, uint64 func_addr, uint64 argu_addr)
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
   
+  uint64 sz_stack;
+  if((sz_stack = uvmalloc(np->pagetable, np->sz, np->sz + 2 * PGSIZE, PTE_W)) == 0) {
+    freeproc(np);
+    release(&np->lock);
+    return -1;
+  }
+
+  np->sz = sz_stack;
+  uvmclear(np->pagetable, np->sz - 2 * PGSIZE);
+
   // update the beginning information of the function
   np->trapframe->a0 = argu_addr;
   np->trapframe->epc = func_addr;
-  np->trapframe->sp = PGSIZE << 2;
+  np->trapframe->sp = np->sz;
   
   // increment reference counts on open file descriptors.
   for(i = 0; i < NOFILE; i++)
