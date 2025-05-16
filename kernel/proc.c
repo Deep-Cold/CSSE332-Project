@@ -15,6 +15,8 @@ struct proc *initproc;
 
 int nextpid = 1;
 struct spinlock pid_lock;
+struct spinlock pgcnt_lock;
+int pgcnt[NPROC];
 
 extern void forkret(void);
 static void freeproc(struct proc *p);
@@ -160,8 +162,14 @@ freeproc(struct proc *p)
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
-  if(p->pagetable)
-    proc_freepagetable(p->pagetable, p->sz);
+
+  acquire(&pgcnt_lock);
+  pgcnt[p->acent]--;
+  if(pgcnt[p->acent] == 0) {
+    if(p->pagetable)
+      proc_freepagetable(p->pagetable, p->sz);
+  }
+  release(&pgcnt_lock);
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -253,6 +261,11 @@ userinit(void)
 
   p->state = RUNNABLE;
 
+  p->acent = p->pid;
+  acquire(&pgcnt_lock);
+  pgcnt[p->pid] = 1;
+  release(&pgcnt_lock);
+
   release(&p->lock);
 }
 
@@ -313,6 +326,11 @@ fork(void)
   safestrcpy(np->name, p->name, sizeof(p->name));
 
   pid = np->pid;
+
+  np->acent = np->pid;
+  acquire(&pgcnt_lock);
+  pgcnt[np->pid] = 1;
+  release(&pgcnt_lock);
 
   release(&np->lock);
 
@@ -785,8 +803,8 @@ thread_create(uint64 tid_addr, uint64 func_addr, uint64 argu_addr)
 {
   struct proc *np;
   struct proc *p = myproc();
-  //int *tid = (int*)tid_addr;
-  //void *func = (void*)func_addr, *argu = (void*)argu_addr;
+  // int *tid = (int*)tid_addr;
+  // void *func = (void*)func_addr, *argu = (void*)argu_addr;
   int i, tidv;
   
   // Allocate thread
@@ -794,22 +812,31 @@ thread_create(uint64 tid_addr, uint64 func_addr, uint64 argu_addr)
     return -1;
   }
   
-  tidv = np -> pid;
+  tidv = np->pid;
+  if(copyout(p->pagetable, tid_addr, (char *)(&tidv), 4) < 0){
+    freeproc(np);
+    release(&np->lock);
+    return -1;
+  }
 
-  // Copy user memory from parent to child.
-  if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0 || copyout(p->pagetable, tid_addr, (char *)(&tidv), 4) < 0){
+  if(uvmsync(p->pagetable, np->pagetable, p->sz) < 0) {
+    printf("thread_create: failed to sync stack space\n");
     freeproc(np);
     release(&np->lock);
     return -1;
   }
   
   np->sz = p->sz;
+  np->acent = p->acent;
+  acquire(&pgcnt_lock);
+  pgcnt[np->acent]++;
+  release(&pgcnt_lock);
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
   
   uint64 sz_stack;
-  if((sz_stack = uvmalloc(np->pagetable, np->sz, np->sz + 2 * PGSIZE, PTE_W)) == 0) {
+  if((sz_stack = uvmalloc(np->pagetable, np->sz, np->sz + 2 * PGSIZE, PTE_W|PTE_R|PTE_U)) == 0) {
     freeproc(np);
     release(&np->lock);
     return -1;
@@ -818,10 +845,26 @@ thread_create(uint64 tid_addr, uint64 func_addr, uint64 argu_addr)
   np->sz = sz_stack;
   uvmclear(np->pagetable, np->sz - 2 * PGSIZE);
 
-  // update the beginning information of the function
-  np->trapframe->a0 = argu_addr;
+  struct proc *tp;
+  for(tp = proc; tp < &proc[NPROC]; tp++) {
+    if(tp->acent == np->acent && tp != np) {
+      acquire(&tp->lock);
+      //printf("thread_create: syncing stack space for thread %d, %d\n", tp->pid, tp->acent);
+      if(uvmsyncatom(np->pagetable, tp->pagetable, np->sz - 2 * PGSIZE) < 0 || uvmsyncatom(np->pagetable, tp->pagetable, np->sz - PGSIZE) < 0) {
+        printf("thread_create: failed to sync stack space\n");
+        freeproc(np);
+        release(&np->lock);
+        release(&tp->lock);
+        return -1;
+      }
+      tp->sz = np->sz;
+      release(&tp->lock);
+    }
+  }
+
+  np->trapframe->a0 = argu_addr; 
   np->trapframe->epc = func_addr;
-  np->trapframe->sp = np->sz;
+  np->trapframe->sp = np->sz - 2 * sizeof(void*) - 8;
   
   // increment reference counts on open file descriptors.
   for(i = 0; i < NOFILE; i++)
@@ -830,7 +873,6 @@ thread_create(uint64 tid_addr, uint64 func_addr, uint64 argu_addr)
   np->cwd = idup(p->cwd);
   
   safestrcpy(np->name, p->name, sizeof(p->name));
-  
   release(&np->lock);
   
   acquire(&wait_lock);
@@ -841,7 +883,7 @@ thread_create(uint64 tid_addr, uint64 func_addr, uint64 argu_addr)
   np->state = RUNNABLE;
   release(&np->lock);
 
-  //printf("Addr of tid is %p, addr or func is %p, addr of argu is %p\n", tid, func, argu);
+  // printf("Addr of tid is %p, addr or func is %p, addr of argu is %p\n", tid, func, argu);
 
   return 0;
 }

@@ -10,10 +10,12 @@ void user_thread_wrapper(void *arg) {
 }
 
 int pthread_create(int* tid, void* func, void* arg) {
-    struct func_wrapper fc;
+    struct func_wrapper *fc = malloc(sizeof(struct func_wrapper));
     void*(*cast_ptr)(void *) = (void*(*)()) func;
-    fc.func = cast_ptr, fc.arg = arg;
-    return thread_create(tid, &user_thread_wrapper, &fc);
+    fc->func = cast_ptr, fc->arg = arg;
+    int ret = thread_create(tid, &user_thread_wrapper, fc);
+    free(fc);
+    return ret;
 }
 
 int pthread_join(int tid, void* ret) {

@@ -332,6 +332,61 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   return -1;
 }
 
+int
+uvmsync(pagetable_t old, pagetable_t new, uint64 sz)
+{
+  pte_t *pte;
+  uint64 pa, i;
+  uint flags;
+  char *mem;
+
+  for(i = 0; i < sz; i += PGSIZE){
+    if((pte = walk(old, i, 0)) == 0)
+      panic("uvmcopy: pte should exist");
+    if((*pte & PTE_V) == 0)
+      panic("uvmcopy: page not present");
+    pa = PTE2PA(*pte);
+    flags = PTE_FLAGS(*pte);
+    mem = (char*)pa;
+    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
+      goto err;
+    }
+  }
+  return 0;
+
+ err:
+  uvmunmap(new, 0, i / PGSIZE, 0);
+  return -1;
+}
+
+int
+uvmsyncatom(pagetable_t old, pagetable_t new, uint64 sz)
+{
+  pte_t *pte;
+  uint64 pa;
+  uint flags;
+  sz = PGROUNDDOWN(sz);
+
+  if((pte = walk(old, sz, 0)) == 0)
+    return 0;
+
+  if((*pte & PTE_V) == 0)
+    return 0;
+
+  pa = PTE2PA(*pte);
+  flags = PTE_FLAGS(*pte);
+
+  if(mappages(new, sz, PGSIZE, pa, flags) != 0){
+    printf("uvmsyncatom: mappages failed at va %p\n", sz);
+    goto err;
+  }
+  return 0;
+
+ err:
+  panic("uvmsyncatom: mappages failed");
+  return -1;
+}
+
 // mark a PTE invalid for user access.
 // used by exec for the user stack guard page.
 void
