@@ -22,6 +22,9 @@ void *myfunc2(void *argu) {
 
 void *myfunc3(void *argu) {
     int x = *(int*)argu;
+    int tid;
+    pthread_create(&tid, myfunc2, argu);
+    sleep(2);
     x *= 20;
     int *ret = malloc(sizeof(int));
     *ret = x;
