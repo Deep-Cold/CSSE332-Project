@@ -6,6 +6,7 @@ struct func_wrapper{
 void user_thread_wrapper(void *arg) {
     struct func_wrapper *argu = (struct func_wrapper*) arg;
     void *ret = argu->func(argu->arg);
+    free(argu);
     thread_exit(ret);
 }
 
@@ -14,7 +15,6 @@ int pthread_create(int* tid, void* func, void* arg) {
     void*(*cast_ptr)(void *) = (void*(*)()) func;
     fc->func = cast_ptr, fc->arg = arg;
     int ret = thread_create(tid, &user_thread_wrapper, fc);
-    free(fc);
     return ret;
 }
 
