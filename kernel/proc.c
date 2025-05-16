@@ -174,6 +174,7 @@ freeproc(struct proc *p)
   p->sz = 0;
   p->pid = 0;
   p->parent = 0;
+  p->acent = 0;
   p->name[0] = 0;
   p->chan = 0;
   p->killed = 0;
@@ -277,6 +278,7 @@ growproc(int n)
   uint64 sz;
   struct proc *p = myproc();
 
+  acquire(&p->lock);
   sz = p->sz;
   if(n > 0){
     if((sz = uvmalloc(p->pagetable, sz, sz + n, PTE_W)) == 0) {
@@ -286,6 +288,22 @@ growproc(int n)
     sz = uvmdealloc(p->pagetable, sz, sz + n);
   }
   p->sz = sz;
+  release(&p->lock);
+
+  struct proc *tp;
+  for(tp = proc; tp < &proc[NPROC]; tp++) {
+    if(tp->acent == p->acent && tp != p) {
+      acquire(&tp->lock);
+      if(uvmsync(p->pagetable, tp->pagetable, tp->sz, p->sz)) {
+        printf("thread_create: failed to sync stack space\n");
+        release(&tp->lock);
+        return -1;
+      }
+      tp->sz = p->sz;
+      release(&tp->lock);
+    }
+  }
+
   return 0;
 }
 
@@ -819,7 +837,7 @@ thread_create(uint64 tid_addr, uint64 func_addr, uint64 argu_addr)
     return -1;
   }
 
-  if(uvmsync(p->pagetable, np->pagetable, p->sz) < 0) {
+  if(uvmsync(p->pagetable, np->pagetable, 0, p->sz) < 0) {
     printf("thread_create: failed to sync stack space\n");
     freeproc(np);
     release(&np->lock);
@@ -849,8 +867,8 @@ thread_create(uint64 tid_addr, uint64 func_addr, uint64 argu_addr)
   for(tp = proc; tp < &proc[NPROC]; tp++) {
     if(tp->acent == np->acent && tp != np) {
       acquire(&tp->lock);
-      //printf("thread_create: syncing stack space for thread %d, %d\n", tp->pid, tp->acent);
-      if(uvmsyncatom(np->pagetable, tp->pagetable, np->sz - 2 * PGSIZE) < 0 || uvmsyncatom(np->pagetable, tp->pagetable, np->sz - PGSIZE) < 0) {
+     // printf("thread_create: syncing stack space for thread %d, %d\n", tp->pid, tp->acent);
+      if(uvmsync(np->pagetable, tp->pagetable, tp->sz, np->sz)) {
         printf("thread_create: failed to sync stack space\n");
         freeproc(np);
         release(&np->lock);
@@ -884,7 +902,6 @@ thread_create(uint64 tid_addr, uint64 func_addr, uint64 argu_addr)
   release(&np->lock);
 
   // printf("Addr of tid is %p, addr or func is %p, addr of argu is %p\n", tid, func, argu);
-
   return 0;
 }
 
