@@ -5,10 +5,10 @@
 
 void *myfunc(void) {
     printf("Hello from myfunc\n");
-    // sleep(3);
-    // int x = 10;
-    // x += 10;
-    // printf("%d\n", x);
+    sleep(3);
+    int x = 10;
+    x += 10;
+    printf("%d\n", x);
     return 0;
 }
 
