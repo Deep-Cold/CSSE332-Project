@@ -1,0 +1,73 @@
+---
+title: Project Milestone 4
+Author(s): Hansong Sun, Lifei Liu
+Date: May 22, 2025
+---
+
+High level description
+======================
+
+The project creates a pthread-like thread creation can control. We allow the stack 
+and memory sharing between threads. The thread creation allows the thread begin at 
+a specific function with a void* argument or no argument. And using pthread_join
+can wait for specific thread return and obtain the return value. The return value
+should also be a void*.
+
+(M2) Thread creation
+====================
+
+The thread_create will functionally just like fork, we try to find a idle process and 
+change it to a new thread by creating and copying the previous pagetable. And we also
+set the epc to the user specified start point of the function. And then copyout the 
+thread id to user space accordingly. Similar, we also put the argument of the function
+in to register a0 of the new thread. Finally, change it status to runnable in order to 
+let idle CPU find it.
+
+(M3) Memory sharing
+===================
+
+When we do thread creation, we will go throught the parent process/thread's pagetable 
+and mapping the pagetable of the new thread to the same physical address as their parent. 
+We create two new pages for the stacks and create all the pages for the thread who has 
+the same pagetable lable. We passes the pagetable lable from the process at the very 
+beginning to the threads created. And maintain the information in the pagetable to be 
+the same whenever one of them changes. Because we have all the pagetable's virtural pages
+points to the exactly the same physical pages. Whenever a thread want to access a
+valid address in global or in the shared heap or even in the stack or the other threads, 
+it should have the same imformation with other threads.
+
+(M4) Memory updates
+===================
+
+When we call sbrk, the system call handler will call the function growproc, in which 
+we synchronize all the page updates to all the thread/process whose pagetable label
+are the same. And in their pagetable, the new page will point to the same physical
+address. If the input of growproc() is negative, we will also do the unmapping to
+all the thread/process whose label it the same with the one trigger the system call.
+
+Test cases
+===========
+
+- We created 2 different kinds of functions, the first one is taking void argument with
+  null return value, the second one is taking a void* argument with null return value,
+  There are almost all the possible cases for our feature. And assume that these function 
+  can run successfully the thread can function normally.
+
+- We tested creating a series of thread using recursive function and run them on recursive function. 
+  They are also tested using recursive function to recursively creating threads.
+
+- We create two thread and the first one will call sbrk to allocate a new page. When it
+  successfully obtain the memory, it will do some change to that memory page. After
+  a while, the second thread will check whether the information in that address
+  is the same as the first thread changed. If so, the memory sharing updates can be ensured.
+
+Additional comments
+==================
+
+No.
+
+Grade
+======
+
+The grade should be 100/100, as all the details are considered and implemented. All the
+possible testing should be able to pass. 
